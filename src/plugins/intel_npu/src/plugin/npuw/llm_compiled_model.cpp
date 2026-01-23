@@ -1208,7 +1208,8 @@ ov::AnyMap get_default_prefill_config(const std::shared_ptr<ov::Model>& model, c
 }
 
 ov::AnyMap get_default_generate_config(const std::optional<NPUDesc>& npudesc,
-                                       const ::intel_npu::npuw::llm::GenerateHint hint) {
+                                       const ::intel_npu::npuw::llm::GenerateHint hint,
+                                       const ov::AnyMap& user_props = {}) {
     auto config = get_default_common_config(npudesc);
     if (hint == ::intel_npu::npuw::llm::GenerateHint::BEST_PERF) {
         config.emplace("NPUW_ONLINE_PIPELINE", "NONE");
@@ -1222,7 +1223,12 @@ ov::AnyMap get_default_generate_config(const std::optional<NPUDesc>& npudesc,
     }
     // We don't need slice out for kv cache model, especially for speculative decoding which need
     // to generate more than 1 token for each inference
-    config.erase("NPUW_SLICE_OUT");
+    // UNLESS user explicitly set it (e.g., for echo mode in lm-evaluation-harness)
+    if (user_props.find("NPUW_SLICE_OUT") == user_props.end()) {
+        config.erase("NPUW_SLICE_OUT");
+    } else {
+        std::cout << "[NPU DEBUG] User explicitly set NPUW_SLICE_OUT, keeping it for generate config" << std::endl;
+    }
     return config;
 }
 
@@ -1759,7 +1765,7 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
     }
     const ::intel_npu::npuw::llm::GenerateHint generate_hint = m_cfg.get<::intel_npu::NPUW_LLM_GENERATE_HINT>();
     auto generate_config =
-        generate_config_opt.value_or(get_default_generate_config(npudesc, generate_hint)).as<ov::AnyMap>();
+        generate_config_opt.value_or(get_default_generate_config(npudesc, generate_hint, other_props)).as<ov::AnyMap>();
 
     auto prefill_config_addition_value =
         prefill_config_addition.has_value() ? prefill_config_addition.value().as<ov::AnyMap>() : ov::AnyMap{};

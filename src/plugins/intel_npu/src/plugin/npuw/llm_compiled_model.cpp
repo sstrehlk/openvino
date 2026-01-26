@@ -1191,7 +1191,9 @@ ov::AnyMap get_default_common_config(const std::optional<NPUDesc>& npudesc) {
     return config;
 }
 
-ov::AnyMap get_default_prefill_config(const std::shared_ptr<ov::Model>& model, const std::optional<NPUDesc>& npudesc) {
+ov::AnyMap get_default_prefill_config(const std::shared_ptr<ov::Model>& model, 
+                                      const std::optional<NPUDesc>& npudesc,
+                                      const ov::AnyMap& user_props = {}) {
     auto config = get_default_common_config(npudesc);
     if (npudesc.has_value() && npudesc->arch == "4000" && npudesc->max_tiles != -1) {
         config.emplace("NPU_TILES", npudesc->max_tiles);
@@ -1204,6 +1206,23 @@ ov::AnyMap get_default_prefill_config(const std::shared_ptr<ov::Model>& model, c
             config.emplace("NPUW_PMM", "NO");
         }
     }
+    
+    // Same fix as generate_config: respect user's NPUW_SLICE_OUT setting
+    std::cout << "[NPU DEBUG prefill_config] Checking NPUW_SLICE_OUT..." << std::endl;
+    std::cout << "[NPU DEBUG prefill_config] config has NPUW_SLICE_OUT=" 
+              << (config.find("NPUW_SLICE_OUT") != config.end() ? config.at("NPUW_SLICE_OUT").as<std::string>() : "<NOT SET>")
+              << " (from baseline)" << std::endl;
+    
+    if (user_props.find("NPUW_SLICE_OUT") != user_props.end()) {
+        std::string user_value = user_props.at("NPUW_SLICE_OUT").as<std::string>();
+        std::cout << "[NPU DEBUG prefill_config] User explicitly set NPUW_SLICE_OUT=" << user_value << ", OVERRIDING baseline config" << std::endl;
+        config["NPUW_SLICE_OUT"] = user_value;
+    }
+    
+    std::cout << "[NPU DEBUG prefill_config] Final config has NPUW_SLICE_OUT=" 
+              << (config.find("NPUW_SLICE_OUT") != config.end() ? config.at("NPUW_SLICE_OUT").as<std::string>() : "<NOT SET>") 
+              << std::endl;
+    
     return config;
 }
 
@@ -1782,7 +1801,7 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
     prefill_model = cvt_kvcache_to_fp16(prefill_model);
 
     auto prefill_config =
-        prefill_config_opt.value_or(get_default_prefill_config(prefill_model, npudesc)).as<ov::AnyMap>();
+        prefill_config_opt.value_or(get_default_prefill_config(prefill_model, npudesc, other_props)).as<ov::AnyMap>();
 
     // NB: GENERATE_HINT is only applicable for default generate config!
     if (generate_config_opt.has_value() && npuw_llm_props.count(ov::intel_npu::npuw::llm::generate_hint.name())) {

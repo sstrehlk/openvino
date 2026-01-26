@@ -1224,17 +1224,35 @@ ov::AnyMap get_default_generate_config(const std::optional<NPUDesc>& npudesc,
     // We don't need slice out for kv cache model, especially for speculative decoding which need
     // to generate more than 1 token for each inference
     // UNLESS user explicitly set it (e.g., for echo mode in lm-evaluation-harness)
+    std::cout << "[NPU DEBUG generate_config] Checking NPUW_SLICE_OUT..." << std::endl;
     if (user_props.find("NPUW_SLICE_OUT") == user_props.end()) {
+        std::cout << "[NPU DEBUG generate_config] User did NOT set NPUW_SLICE_OUT, erasing from config" << std::endl;
         config.erase("NPUW_SLICE_OUT");
     } else {
-        std::cout << "[NPU DEBUG] User explicitly set NPUW_SLICE_OUT, keeping it for generate config" << std::endl;
+        std::cout << "[NPU DEBUG generate_config] User explicitly set NPUW_SLICE_OUT=" << user_props.at("NPUW_SLICE_OUT").as<std::string>() << ", keeping it for generate config" << std::endl;
     }
+    
+    std::cout << "[NPU DEBUG generate_config] Final config has NPUW_SLICE_OUT=" 
+              << (config.find("NPUW_SLICE_OUT") != config.end() ? config.at("NPUW_SLICE_OUT").as<std::string>() : "<NOT SET>") 
+              << std::endl;
+    
     return config;
 }
 
-ov::AnyMap get_default_lm_head_config(const std::optional<NPUDesc>& npudesc) {
+ov::AnyMap get_default_lm_head_config(const std::optional<NPUDesc>& npudesc, const ov::AnyMap& user_props = {}) {
     auto config = get_default_common_config(npudesc);
-    config.erase("NPUW_SLICE_OUT");
+    
+    // Check if user explicitly set NPUW_SLICE_OUT before erasing it
+    bool user_set_slice_out = (user_props.find("NPUW_SLICE_OUT") != user_props.end());
+    std::cout << "[NPU DEBUG lm_head_config] user_set_slice_out=" << (user_set_slice_out ? "YES" : "NO") << std::endl;
+    
+    if (!user_set_slice_out) {
+        std::cout << "[NPU DEBUG lm_head_config] Erasing NPUW_SLICE_OUT from lm_head config (default behavior)" << std::endl;
+        config.erase("NPUW_SLICE_OUT");
+    } else {
+        std::cout << "[NPU DEBUG lm_head_config] User set NPUW_SLICE_OUT=" << user_props.at("NPUW_SLICE_OUT").as<std::string>() << ", NOT erasing from lm_head config" << std::endl;
+    }
+    
     config.erase("NPUW_FUNCALL_ASYNC");
     config.emplace("NPUW_ONLINE_PIPELINE", "NONE");
     return config;
@@ -1882,8 +1900,23 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
     NPUW_ASSERT(m_prefill_compiled && "Can't create ov::npuw::CompiledModel for passed prefill "
                                       "model and its config, please check passed config.");
     if (lm_head_model) {
-        auto lm_head_config = get_default_lm_head_config(npudesc);
+        std::cout << "[NPU DEBUG] About to create lm_head_config, checking for NPUW_SLICE_OUT in other_props..." << std::endl;
+        if (other_props.find("NPUW_SLICE_OUT") != other_props.end()) {
+            std::cout << "[NPU DEBUG] Found NPUW_SLICE_OUT in other_props: " << other_props.at("NPUW_SLICE_OUT").as<std::string>() << std::endl;
+        } else {
+            std::cout << "[NPU DEBUG] NPUW_SLICE_OUT NOT found in other_props" << std::endl;
+        }
+        
+        auto lm_head_config = get_default_lm_head_config(npudesc, other_props);
         merge_config_with(lm_head_config, other_props);
+        
+        std::cout << "[NPU DEBUG] After merge_config_with, checking lm_head_config for NPUW_SLICE_OUT..." << std::endl;
+        if (lm_head_config.find("NPUW_SLICE_OUT") != lm_head_config.end()) {
+            std::cout << "[NPU DEBUG] lm_head_config has NPUW_SLICE_OUT=" << lm_head_config.at("NPUW_SLICE_OUT").as<std::string>() << std::endl;
+        } else {
+            std::cout << "[NPU DEBUG] lm_head_config does NOT have NPUW_SLICE_OUT (THIS IS THE BUG!)" << std::endl;
+        }
+        
         auto lm_head_config_addition_value = lm_head_config_addition.value_or(ov::AnyMap{}).as<ov::AnyMap>();
         merge_config_with(lm_head_config, lm_head_config_addition_value);
 

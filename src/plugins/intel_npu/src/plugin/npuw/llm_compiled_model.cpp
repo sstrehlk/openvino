@@ -1225,11 +1225,18 @@ ov::AnyMap get_default_generate_config(const std::optional<NPUDesc>& npudesc,
     // to generate more than 1 token for each inference
     // UNLESS user explicitly set it (e.g., for echo mode in lm-evaluation-harness)
     std::cout << "[NPU DEBUG generate_config] Checking NPUW_SLICE_OUT..." << std::endl;
+    std::cout << "[NPU DEBUG generate_config] config has NPUW_SLICE_OUT=" 
+              << (config.find("NPUW_SLICE_OUT") != config.end() ? config.at("NPUW_SLICE_OUT").as<std::string>() : "<NOT SET>")
+              << " (from baseline)" << std::endl;
+    
     if (user_props.find("NPUW_SLICE_OUT") == user_props.end()) {
         std::cout << "[NPU DEBUG generate_config] User did NOT set NPUW_SLICE_OUT, erasing from config" << std::endl;
         config.erase("NPUW_SLICE_OUT");
     } else {
-        std::cout << "[NPU DEBUG generate_config] User explicitly set NPUW_SLICE_OUT=" << user_props.at("NPUW_SLICE_OUT").as<std::string>() << ", keeping it for generate config" << std::endl;
+        // BUG FIX: User set NPUW_SLICE_OUT, so we must OVERRIDE the baseline value (which is always YES)
+        std::string user_value = user_props.at("NPUW_SLICE_OUT").as<std::string>();
+        std::cout << "[NPU DEBUG generate_config] User explicitly set NPUW_SLICE_OUT=" << user_value << ", OVERRIDING baseline config" << std::endl;
+        config["NPUW_SLICE_OUT"] = user_value;  // Override, not just "keep" - baseline already set it to YES!
     }
     
     std::cout << "[NPU DEBUG generate_config] Final config has NPUW_SLICE_OUT=" 

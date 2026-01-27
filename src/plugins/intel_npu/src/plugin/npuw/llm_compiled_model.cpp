@@ -1711,6 +1711,8 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
     }
 
     LOG_DEBUG("Make prefill model with static shapes");
+    std::cout << "[NPUW RESHAPE DEBUG] ABOUT TO CALL reshape_to_static for prefill model, use_chunk_prefill=" 
+              << m_use_chunk_prefill << std::endl;
     m_max_lora_rank = m_cfg.get<::intel_npu::NPUW_LLM_MAX_LORA_RANK>();
     if (m_use_chunk_prefill) {
         reshape_to_static(prefill_model,

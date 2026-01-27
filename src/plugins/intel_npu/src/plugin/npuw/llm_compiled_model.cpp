@@ -1025,6 +1025,18 @@ void reshape_to_static(std::shared_ptr<ov::Model> model,
                               << std::endl;
                 }
                 new_shape[kv_axes_position.seq_len] = seq_len_value;
+                
+                // Additional debug: print the entire new_shape
+                std::cout << "[NPUW RESHAPE DEBUG] Input '" << input_name << "' final shape: [";
+                for (size_t i = 0; i < new_shape.size(); i++) {
+                    if (i > 0) std::cout << ", ";
+                    if (new_shape[i].is_static()) {
+                        std::cout << new_shape[i].get_length();
+                    } else {
+                        std::cout << "?";
+                    }
+                }
+                std::cout << "]" << std::endl;
             }
         }
         new_shapes.emplace(input_name, new_shape);

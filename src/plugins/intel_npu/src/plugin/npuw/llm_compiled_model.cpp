@@ -1014,7 +1014,17 @@ void reshape_to_static(std::shared_ptr<ov::Model> model,
                                                           ? kvcache_size - input_size  // kv_size for decoder
                                                           : lhs_seq_size;  // sequence size for encoder hidden states
             } else {                                                       // LLM/VLM
-                new_shape[kv_axes_position.seq_len] = kvcache_size - input_size;
+                // BUGFIX: Ensure seq_len is at least 1 to avoid compilation errors with 0-sized dimensions
+                // When kvcache_size == input_size (prefill with full cache), we get 0, which breaks some NPU ops
+                auto seq_len_value = kvcache_size - input_size;
+                if (seq_len_value == 0) {
+                    seq_len_value = 1;
+                    std::cout << "[NPUW RESHAPE DEBUG] KV cache input '" << input_name 
+                              << "' has seq_len=0 (kvcache_size=" << kvcache_size 
+                              << " - input_size=" << input_size << "), setting to 1 to avoid compilation errors" 
+                              << std::endl;
+                }
+                new_shape[kv_axes_position.seq_len] = seq_len_value;
             }
         }
         new_shapes.emplace(input_name, new_shape);

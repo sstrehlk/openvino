@@ -963,6 +963,8 @@ void reshape_to_static(std::shared_ptr<ov::Model> model,
                        const KVAxesPosition& kv_axes_position,
                        const uint32_t lora_rank,
                        const uint32_t lhs_seq_size = 0) {
+    std::cout << "[NPUW RESHAPE DEBUG] reshape_to_static() CALLED with input_size=" << input_size 
+              << ", kvcache_size=" << kvcache_size << std::endl;
     std::map<std::string, ov::PartialShape> new_shapes;
     for (const auto& input : model->inputs()) {
         const auto& input_name = input.get_any_name();

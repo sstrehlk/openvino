@@ -191,6 +191,9 @@ ov::npuw::CompiledModel::CompiledModel(const std::shared_ptr<ov::Model>& model,
       m_cfg(m_options_desc),
       m_name(model->get_friendly_name()),
       m_loaded_from_cache(false) {
+    std::cout << "============================================" << std::endl;
+    std::cout << "[NPUW DEBUG] CompiledModel (NOT LLM) constructor called!" << std::endl;
+    std::cout << "============================================" << std::endl;
     init_profiling();
 
     // Note: we need to identify original bf16 constants for potential weightless deserialization later
@@ -581,6 +584,9 @@ ov::npuw::CompiledModel::CompiledModel(const std::shared_ptr<ov::Model>& model,
       m_cfg(m_options_desc),
       m_name(model->get_friendly_name()),
       m_loaded_from_cache(serialized) {
+    std::cout << "============================================" << std::endl;
+    std::cout << "[NPUW DEBUG] CompiledModel (deserialization) constructor called!" << std::endl;
+    std::cout << "============================================" << std::endl;
     NPUW_ASSERT(serialized && "This constructor should only be utilized during deserialization!");
     init_profiling();
 

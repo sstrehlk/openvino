@@ -1546,6 +1546,9 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
       m_name(model->get_friendly_name()),
       m_options_desc(std::make_shared<::intel_npu::OptionsDesc>()),
       m_cfg(m_options_desc) {
+    std::cout << "============================================" << std::endl;
+    std::cout << "[NPUW LLM DEBUG] LLMCompiledModel constructor called!" << std::endl;
+    std::cout << "============================================" << std::endl;
     LOG_DEBUG("Creating LLMCompiledModel");
     LOG_BLOCK();
 

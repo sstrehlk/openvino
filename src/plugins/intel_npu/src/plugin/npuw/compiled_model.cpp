@@ -120,21 +120,25 @@ void pre_load_transform(const std::shared_ptr<ov::Model>& model, const ov::AnyMa
         ov::npuw::patterns::opt::untangleConst(model);
     }
 
-    std::cout << "[NPUW SLICE DEBUG] Checking NPUW_SLICE_OUT in compiled_model.cpp..." << std::endl;
+    std::cerr << "[NPUW SLICE DEBUG] Checking NPUW_SLICE_OUT in compiled_model.cpp..." << std::endl;
+    std::cerr << "[NPUW TYPE DEBUG] This function is in BASE CompiledModel (not LLM)" << std::endl;
+    std::cerr.flush();
     
     // Check what's actually in props
     if (props.find("NPUW_SLICE_OUT") != props.end()) {
         auto raw_value = props.at("NPUW_SLICE_OUT");
-        std::cout << "[NPUW SLICE DEBUG] props contains NPUW_SLICE_OUT, raw value type: " << raw_value.as<std::string>() << std::endl;
+        std::cerr << "[NPUW SLICE DEBUG] props contains NPUW_SLICE_OUT, raw value type: " << raw_value.as<std::string>() << std::endl;
     } else {
-        std::cout << "[NPUW SLICE DEBUG] props DOES NOT contain NPUW_SLICE_OUT, will use default" << std::endl;
+        std::cerr << "[NPUW SLICE DEBUG] props DOES NOT contain NPUW_SLICE_OUT, will use default" << std::endl;
     }
     
     bool slice_out_enabled = cfg_get<::intel_npu::NPUW_SLICE_OUT>(props);
-    std::cout << "[NPUW SLICE DEBUG] cfg_get<NPUW_SLICE_OUT>(props) = " << (slice_out_enabled ? "TRUE" : "FALSE") << std::endl;
+    std::cerr << "[NPUW SLICE DEBUG] cfg_get<NPUW_SLICE_OUT>(props) = " << (slice_out_enabled ? "TRUE" : "FALSE") << std::endl;
+    std::cerr.flush();
     
     if (slice_out_enabled) {
-        std::cout << "[NPUW SLICE DEBUG] ❌ APPLYING SliceLastMatmul transform - THIS BREAKS ECHO MODE!" << std::endl;
+        std::cerr << "[NPUW SLICE DEBUG] ❌ APPLYING SliceLastMatmul transform - THIS BREAKS ECHO MODE!" << std::endl;
+        std::cerr.flush();
         // Add Slice before last MatMul for the prefill model
         ov::pass::GraphRewrite rewr;
         rewr.add_matcher<ov::npuw::patterns::opt::SliceLastMatmul>();
@@ -143,7 +147,8 @@ void pre_load_transform(const std::shared_ptr<ov::Model>& model, const ov::AnyMa
         rewr.add_matcher<ov::npuw::patterns::opt::SliceLastMatmulMultiply>();
         rewr.run_on_model(model);
     } else {
-        std::cout << "[NPUW SLICE DEBUG] ✅ SKIPPING SliceLastMatmul transform (echo mode will work)" << std::endl;
+        std::cerr << "[NPUW SLICE DEBUG] ✅ SKIPPING SliceLastMatmul transform (echo mode will work)" << std::endl;
+        std::cerr.flush();
     }
     model->validate_nodes_and_infer_types();
 }

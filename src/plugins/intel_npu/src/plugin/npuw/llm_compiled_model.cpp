@@ -963,8 +963,9 @@ void reshape_to_static(std::shared_ptr<ov::Model> model,
                        const KVAxesPosition& kv_axes_position,
                        const uint32_t lora_rank,
                        const uint32_t lhs_seq_size = 0) {
-    std::cout << "[NPUW RESHAPE DEBUG] reshape_to_static() CALLED with input_size=" << input_size 
-              << ", kvcache_size=" << kvcache_size << std::endl;
+    std::cerr << "[NPUW LLM RESHAPE] *** reshape_to_static() CALLED ***" << std::endl;
+    std::cerr << "[NPUW LLM RESHAPE] input_size=" << input_size << ", kvcache_size=" << kvcache_size << std::endl;
+    std::cerr.flush();
     std::map<std::string, ov::PartialShape> new_shapes;
     for (const auto& input : model->inputs()) {
         const auto& input_name = input.get_any_name();
@@ -1714,8 +1715,9 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
     }
 
     LOG_DEBUG("Make prefill model with static shapes");
-    std::cout << "[NPUW RESHAPE DEBUG] ABOUT TO CALL reshape_to_static for prefill model, use_chunk_prefill=" 
-              << m_use_chunk_prefill << std::endl;
+    std::cerr << "[NPUW LLM DEBUG] *** INSIDE LLMCompiledModel - ABOUT TO CALL reshape_to_static ***" << std::endl;
+    std::cerr << "[NPUW LLM DEBUG] use_chunk_prefill=" << m_use_chunk_prefill << std::endl;
+    std::cerr.flush();
     m_max_lora_rank = m_cfg.get<::intel_npu::NPUW_LLM_MAX_LORA_RANK>();
     if (m_use_chunk_prefill) {
         reshape_to_static(prefill_model,

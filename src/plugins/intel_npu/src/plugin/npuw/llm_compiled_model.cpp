@@ -877,6 +877,9 @@ void reshape_to_static(std::shared_ptr<ov::Model> model,
                        const KVAxesPosition& kv_axes_position,
                        const uint32_t lora_rank,
                        const uint32_t lhs_seq_size = 0) {
+    std::cerr << "[NPUW LLM RESHAPE] *** reshape_to_static() CALLED ***" << std::endl;
+    std::cerr << "[NPUW LLM RESHAPE] input_size=" << input_size << ", kvcache_size=" << kvcache_size << std::endl;
+    std::cerr.flush();
     std::map<std::string, ov::PartialShape> new_shapes;
     for (const auto& input : model->inputs()) {
         const auto& input_name = input.get_any_name();
@@ -928,7 +931,30 @@ void reshape_to_static(std::shared_ptr<ov::Model> model,
                                                           ? kvcache_size - input_size  // kv_size for decoder
                                                           : lhs_seq_size;  // sequence size for encoder hidden states
             } else {                                                       // LLM/VLM
-                new_shape[kv_axes_position.seq_len] = kvcache_size - input_size;
+                // When kvcache_size == input_size (prefill with full cache), seq_len would be 0
+                // In this case, use input_size as seq_len to properly handle echo mode
+                auto seq_len_value = kvcache_size - input_size;
+                if (seq_len_value == 0) {
+                    seq_len_value = input_size;  // Use input_size for prefill phase
+                    std::cout << "[NPUW RESHAPE DEBUG] KV cache input '" << input_name 
+                              << "' has seq_len=0 (kvcache_size=" << kvcache_size 
+                              << " - input_size=" << input_size << "), setting to input_size=" << seq_len_value
+                              << " for prefill phase" 
+                              << std::endl;
+                }
+                new_shape[kv_axes_position.seq_len] = seq_len_value;
+                
+                // Additional debug: print the entire new_shape
+                std::cout << "[NPUW RESHAPE DEBUG] Input '" << input_name << "' final shape: [";
+                for (size_t i = 0; i < new_shape.size(); i++) {
+                    if (i > 0) std::cout << ", ";
+                    if (new_shape[i].is_static()) {
+                        std::cout << new_shape[i].get_length();
+                    } else {
+                        std::cout << "?";
+                    }
+                }
+                std::cout << "]" << std::endl;
             }
         }
         new_shapes.emplace(input_name, new_shape);
@@ -1105,7 +1131,9 @@ ov::AnyMap get_default_common_config(const std::optional<NPUDesc>& npudesc) {
     return config;
 }
 
-ov::AnyMap get_default_prefill_config(const std::shared_ptr<ov::Model>& model, const std::optional<NPUDesc>& npudesc) {
+ov::AnyMap get_default_prefill_config(const std::shared_ptr<ov::Model>& model, 
+                                      const std::optional<NPUDesc>& npudesc,
+                                      const ov::AnyMap& user_props = {}) {
     auto config = get_default_common_config(npudesc);
     if (npudesc.has_value() && npudesc->arch == "4000" && npudesc->max_tiles != -1) {
         config.emplace("NPU_TILES", npudesc->max_tiles);
@@ -1118,11 +1146,29 @@ ov::AnyMap get_default_prefill_config(const std::shared_ptr<ov::Model>& model, c
             config.emplace("NPUW_PMM", "NO");
         }
     }
+    
+    // Same fix as generate_config: respect user's NPUW_SLICE_OUT setting
+    std::cout << "[NPU DEBUG prefill_config] Checking NPUW_SLICE_OUT..." << std::endl;
+    std::cout << "[NPU DEBUG prefill_config] config has NPUW_SLICE_OUT=" 
+              << (config.find("NPUW_SLICE_OUT") != config.end() ? config.at("NPUW_SLICE_OUT").as<std::string>() : "<NOT SET>")
+              << " (from baseline)" << std::endl;
+    
+    if (user_props.find("NPUW_SLICE_OUT") != user_props.end()) {
+        std::string user_value = user_props.at("NPUW_SLICE_OUT").as<std::string>();
+        std::cout << "[NPU DEBUG prefill_config] User explicitly set NPUW_SLICE_OUT=" << user_value << ", OVERRIDING baseline config" << std::endl;
+        config["NPUW_SLICE_OUT"] = user_value;
+    }
+    
+    std::cout << "[NPU DEBUG prefill_config] Final config has NPUW_SLICE_OUT=" 
+              << (config.find("NPUW_SLICE_OUT") != config.end() ? config.at("NPUW_SLICE_OUT").as<std::string>() : "<NOT SET>") 
+              << std::endl;
+    
     return config;
 }
 
 ov::AnyMap get_default_generate_config(const std::optional<NPUDesc>& npudesc,
-                                       const ::intel_npu::npuw::llm::GenerateHint hint) {
+                                       const ::intel_npu::npuw::llm::GenerateHint hint,
+                                       const ov::AnyMap& user_props = {}) {
     auto config = get_default_common_config(npudesc);
     if (hint == ::intel_npu::npuw::llm::GenerateHint::BEST_PERF) {
         config.emplace("NPUW_ONLINE_PIPELINE", "NONE");
@@ -1136,13 +1182,43 @@ ov::AnyMap get_default_generate_config(const std::optional<NPUDesc>& npudesc,
     }
     // We don't need slice out for kv cache model, especially for speculative decoding which need
     // to generate more than 1 token for each inference
-    config.erase("NPUW_SLICE_OUT");
+    // UNLESS user explicitly set it (e.g., for echo mode in lm-evaluation-harness)
+    std::cout << "[NPU DEBUG generate_config] Checking NPUW_SLICE_OUT..." << std::endl;
+    std::cout << "[NPU DEBUG generate_config] config has NPUW_SLICE_OUT=" 
+              << (config.find("NPUW_SLICE_OUT") != config.end() ? config.at("NPUW_SLICE_OUT").as<std::string>() : "<NOT SET>")
+              << " (from baseline)" << std::endl;
+    
+    if (user_props.find("NPUW_SLICE_OUT") == user_props.end()) {
+        std::cout << "[NPU DEBUG generate_config] User did NOT set NPUW_SLICE_OUT, erasing from config" << std::endl;
+        config.erase("NPUW_SLICE_OUT");
+    } else {
+        // BUG FIX: User set NPUW_SLICE_OUT, so we must OVERRIDE the baseline value (which is always YES)
+        std::string user_value = user_props.at("NPUW_SLICE_OUT").as<std::string>();
+        std::cout << "[NPU DEBUG generate_config] User explicitly set NPUW_SLICE_OUT=" << user_value << ", OVERRIDING baseline config" << std::endl;
+        config["NPUW_SLICE_OUT"] = user_value;  // Override, not just "keep" - baseline already set it to YES!
+    }
+    
+    std::cout << "[NPU DEBUG generate_config] Final config has NPUW_SLICE_OUT=" 
+              << (config.find("NPUW_SLICE_OUT") != config.end() ? config.at("NPUW_SLICE_OUT").as<std::string>() : "<NOT SET>") 
+              << std::endl;
+    
     return config;
 }
 
-ov::AnyMap get_default_lm_head_config(const std::optional<NPUDesc>& npudesc) {
+ov::AnyMap get_default_lm_head_config(const std::optional<NPUDesc>& npudesc, const ov::AnyMap& user_props = {}) {
     auto config = get_default_common_config(npudesc);
-    config.erase("NPUW_SLICE_OUT");
+    
+    // Check if user explicitly set NPUW_SLICE_OUT before erasing it
+    bool user_set_slice_out = (user_props.find("NPUW_SLICE_OUT") != user_props.end());
+    std::cout << "[NPU DEBUG lm_head_config] user_set_slice_out=" << (user_set_slice_out ? "YES" : "NO") << std::endl;
+    
+    if (!user_set_slice_out) {
+        std::cout << "[NPU DEBUG lm_head_config] Erasing NPUW_SLICE_OUT from lm_head config (default behavior)" << std::endl;
+        config.erase("NPUW_SLICE_OUT");
+    } else {
+        std::cout << "[NPU DEBUG lm_head_config] User set NPUW_SLICE_OUT=" << user_props.at("NPUW_SLICE_OUT").as<std::string>() << ", NOT erasing from lm_head config" << std::endl;
+    }
+    
     config.erase("NPUW_FUNCALL_ASYNC");
     config.emplace("NPUW_ONLINE_PIPELINE", "NONE");
     return config;
@@ -1351,6 +1427,9 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
       m_name(model->get_friendly_name()),
       m_options_desc(std::make_shared<::intel_npu::OptionsDesc>()),
       m_cfg(m_options_desc) {
+    std::cout << "============================================" << std::endl;
+    std::cout << "[NPUW LLM DEBUG] LLMCompiledModel constructor called!" << std::endl;
+    std::cout << "============================================" << std::endl;
     LOG_DEBUG("Creating LLMCompiledModel");
     LOG_BLOCK();
 
@@ -1512,6 +1591,9 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
     }
 
     LOG_DEBUG("Make prefill model with static shapes");
+    std::cerr << "[NPUW LLM DEBUG] *** INSIDE LLMCompiledModel - ABOUT TO CALL reshape_to_static ***" << std::endl;
+    std::cerr << "[NPUW LLM DEBUG] use_chunk_prefill=" << m_use_chunk_prefill << std::endl;
+    std::cerr.flush();
     m_max_lora_rank = m_cfg.get<::intel_npu::NPUW_LLM_MAX_LORA_RANK>();
     if (m_use_chunk_prefill) {
         reshape_to_static(prefill_model,
@@ -1620,7 +1702,7 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
     prefill_model = cvt_kvcache_to_fp16(prefill_model);
 
     auto prefill_config =
-        prefill_config_opt.value_or(get_default_prefill_config(prefill_model, npudesc)).as<ov::AnyMap>();
+        prefill_config_opt.value_or(get_default_prefill_config(prefill_model, npudesc, other_props)).as<ov::AnyMap>();
 
     // NB: GENERATE_HINT is only applicable for default generate config!
     if (generate_config_opt.has_value() && npuw_llm_props.count(ov::intel_npu::npuw::llm::generate_hint.name())) {
@@ -1628,7 +1710,7 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
     }
     const ::intel_npu::npuw::llm::GenerateHint generate_hint = m_cfg.get<::intel_npu::NPUW_LLM_GENERATE_HINT>();
     auto generate_config =
-        generate_config_opt.value_or(get_default_generate_config(npudesc, generate_hint)).as<ov::AnyMap>();
+        generate_config_opt.value_or(get_default_generate_config(npudesc, generate_hint, other_props)).as<ov::AnyMap>();
 
     auto prefill_config_addition_value =
         prefill_config_addition.has_value() ? prefill_config_addition.value().as<ov::AnyMap>() : ov::AnyMap{};
@@ -1745,8 +1827,23 @@ ov::npuw::LLMCompiledModel::LLMCompiledModel(const std::shared_ptr<ov::Model>& m
     NPUW_ASSERT(m_prefill_compiled && "Can't create ov::npuw::CompiledModel for passed prefill "
                                       "model and its config, please check passed config.");
     if (lm_head_model) {
-        auto lm_head_config = get_default_lm_head_config(npudesc);
+        std::cout << "[NPU DEBUG] About to create lm_head_config, checking for NPUW_SLICE_OUT in other_props..." << std::endl;
+        if (other_props.find("NPUW_SLICE_OUT") != other_props.end()) {
+            std::cout << "[NPU DEBUG] Found NPUW_SLICE_OUT in other_props: " << other_props.at("NPUW_SLICE_OUT").as<std::string>() << std::endl;
+        } else {
+            std::cout << "[NPU DEBUG] NPUW_SLICE_OUT NOT found in other_props" << std::endl;
+        }
+        
+        auto lm_head_config = get_default_lm_head_config(npudesc, other_props);
         merge_config_with(lm_head_config, other_props);
+        
+        std::cout << "[NPU DEBUG] After merge_config_with, checking lm_head_config for NPUW_SLICE_OUT..." << std::endl;
+        if (lm_head_config.find("NPUW_SLICE_OUT") != lm_head_config.end()) {
+            std::cout << "[NPU DEBUG] lm_head_config has NPUW_SLICE_OUT=" << lm_head_config.at("NPUW_SLICE_OUT").as<std::string>() << std::endl;
+        } else {
+            std::cout << "[NPU DEBUG] lm_head_config does NOT have NPUW_SLICE_OUT (THIS IS THE BUG!)" << std::endl;
+        }
+        
         auto lm_head_config_addition_value = lm_head_config_addition.value_or(ov::AnyMap{}).as<ov::AnyMap>();
         merge_config_with(lm_head_config, lm_head_config_addition_value);
 
